@@ -1,0 +1,15 @@
+{
+    "modelVersion":  "6.0.1",
+    "name":  "meow-core",
+    "version":  "1.0.0",
+    "description":  "Meow music player core with a minimal reference UI",
+    "main":  "",
+    "author":  "",
+    "license":  "MPL-2.0",
+    "dependencies":  {
+
+                     },
+    "devDependencies":  {
+
+                        }
+}

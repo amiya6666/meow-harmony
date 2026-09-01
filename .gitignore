@@ -1,0 +1,15 @@
+.cache/
+.hvigor/
+.idea/
+build/
+entry/build/
+oh_modules/
+entry/oh_modules/
+local.properties
+*.p12
+*.cer
+*.p7b
+*.pem
+*.key
+*.jks
+*.keystore

@@ -1,0 +1,783 @@
+
+  // Open-source reference UI state. These fields are intentionally plain and contain no production animation/design logic.
+  @State coreDetailVisible: boolean = false;
+  @State corePlayerVisible: boolean = false;
+  @State coreQueueVisible: boolean = false;
+  @State coreSearchKind: number = 0;
+
+  coreBg(): string { return this.isDark ? '#111111' : '#FFFFFF'; }
+  coreCard(): string { return this.isDark ? '#202020' : '#F2F2F2'; }
+  coreText(): string { return this.isDark ? '#FFFFFF' : '#111111'; }
+  coreSub(): string { return this.isDark ? '#B8B8B8' : '#666666'; }
+  coreAccent(): string { return this.isDark ? '#FFFFFF' : '#111111'; }
+
+  coreSelectTab(index: number): void {
+    this.tab = index;
+    this.page = 'main';
+    this.coreDetailVisible = false;
+    this.corePlayerVisible = false;
+    this.coreQueueVisible = false;
+    if (index === 1) this.loadLib(this.lib);
+    if (index === 3) this.loadMe();
+  }
+
+  coreOpenAlbum(a: Album): void {
+    this.coreDetailVisible = true;
+    this.corePlayerVisible = false;
+    this.openAlbum(a);
+  }
+
+  coreOpenArtist(a: Artist): void {
+    this.coreDetailVisible = true;
+    this.corePlayerVisible = false;
+    this.openArtist(a);
+  }
+
+  coreOpenPlaylist(p: Playlist): void {
+    this.coreDetailVisible = true;
+    this.corePlayerVisible = false;
+    this.openPlaylist(p);
+  }
+
+  coreCloseDetail(): void {
+    this.detailLoadToken++;
+    this.coreDetailVisible = false;
+  }
+
+  coreOpenCurrentArtist(): void {
+    this.coreDetailVisible = true;
+    this.corePlayerVisible = false;
+    this.openNowArtist();
+  }
+
+  coreOpenCurrentAlbum(): void {
+    this.coreDetailVisible = true;
+    this.corePlayerVisible = false;
+    this.openNowAlbum();
+  }
+
+  coreSelectSourceKind(kind: string): void {
+    if (this.srcBusy) return;
+    this.srcKind = kind === 'webdav' ? 'webdav' : 'subsonic';
+    if (this.srcEditId.length === 0 && (this.srcName.length === 0 || this.srcName === 'Navidrome' || this.srcName === 'WebDAV')) {
+      this.srcName = this.srcKind === 'webdav' ? 'WebDAV' : 'Navidrome';
+    }
+    this.srcOk = false;
+    this.srcMsg = '';
+  }
+
+  coreNewSource(): void {
+    this.srcEditId = '';
+    this.srcName = this.srcKind === 'webdav' ? 'WebDAV' : 'Navidrome';
+    this.srcUrl = '';
+    this.srcUser = '';
+    this.srcPass = '';
+    this.srcMsg = '';
+    this.srcOk = false;
+  }
+
+  coreQueuePlay(index: number): void {
+    if (index < 0 || index >= this.queue.length) return;
+    this.qpos = index;
+    this.playCurrent();
+  }
+
+  coreQueueRemove(index: number): void {
+    if (index < 0 || index >= this.queue.length) return;
+    const next: Track[] = [];
+    for (let i = 0; i < this.queue.length; i++) if (i !== index) next.push(this.queue[i]);
+    if (next.length === 0) {
+      this.queue = [];
+      this.qpos = 0;
+      this.playing = false;
+      return;
+    }
+    if (index < this.qpos) this.qpos--;
+    else if (index === this.qpos && this.qpos >= next.length) this.qpos = next.length - 1;
+    this.queue = next;
+    this.saveQueueState();
+  }
+
+  coreAddTrackToPlaylist(t: Track): void {
+    this.plPickTrack = t;
+    this.plPickTitle = t.title;
+    this.plPickOn = true;
+  }
+
+  @Builder
+  coreNavButton(label: string, selected: boolean, action: () => void) {
+    Button(label)
+      .type(ButtonType.Normal)
+      .fontSize(14)
+      .height(40)
+      .fontColor(selected ? this.coreBg() : this.coreText())
+      .backgroundColor(selected ? this.coreAccent() : this.coreCard())
+      .onClick(action)
+  }
+
+  @Builder
+  coreHeader(title: string, back: () => void) {
+    Row({ space: 10 }) {
+      Button('返回').type(ButtonType.Normal).onClick(back)
+      Text(title).fontSize(22).fontWeight(FontWeight.Bold).fontColor(this.coreText()).layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+  }
+
+  @Builder
+  coreStatus() {
+    if (this.err.length > 0) {
+      Row({ space: 8 }) {
+        Text(this.err).fontSize(12).fontColor('#E33').layoutWeight(1).maxLines(2)
+        Button('重试').type(ButtonType.Normal).onClick(() => { this.retrySources(); })
+      }
+      .width('100%').padding({ left: 12, right: 12, bottom: 6 })
+    } else if (this.toast.length > 0 || this.offlineHint.length > 0) {
+      Text(this.toast.length > 0 ? this.toast : this.offlineHint)
+        .fontSize(12).fontColor(this.coreSub()).width('100%')
+        .padding({ left: 12, right: 12, bottom: 6 }).maxLines(2)
+    }
+  }
+
+  @Builder
+  coreTrackRow(t: Track, rows: Track[], index: number) {
+    Row({ space: 8 }) {
+      Column() {
+        Text(t.title).fontSize(15).fontWeight(FontWeight.Medium).fontColor(this.coreText()).maxLines(1)
+        Text(t.artist + (t.album.length > 0 ? ' · ' + t.album : '') + (t.duration > 0 ? ' · ' + fmtDur(t.duration) : ''))
+          .fontSize(11).fontColor(this.coreSub()).maxLines(1)
+      }
+      .alignItems(HorizontalAlign.Start).layoutWeight(1)
+      Button('播放').type(ButtonType.Normal).fontSize(12).onClick(() => { this.playList(rows, index); })
+      Button(this.isCachedFavorite(this.trackRef(t)) ? '已收藏' : '收藏')
+        .type(ButtonType.Normal).fontSize(12).onClick(() => { this.likeTrack(t); })
+      Button('歌单').type(ButtonType.Normal).fontSize(12).onClick(() => { this.coreAddTrackToPlaylist(t); })
+    }
+    .width('100%').padding({ left: 12, right: 12, top: 9, bottom: 9 })
+    .border({ width: { bottom: 0.5 }, color: this.isDark ? '#333333' : '#DDDDDD' })
+  }
+
+  @Builder
+  coreTrackList(rows: Track[]) {
+    List() {
+      ForEach(rows, (t: Track, index: number) => {
+        ListItem() { this.coreTrackRow(t, rows, index) }
+      }, (t: Track, index: number) => t.source + '/' + t.id + '/' + index)
+    }
+    .width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreAlbumList(rows: Album[]) {
+    List() {
+      ForEach(rows, (a: Album) => {
+        ListItem() {
+          Row({ space: 10 }) {
+            if (a.cover.length > 0) {
+              Image(this.client.abs(a.cover)).width(48).height(48).objectFit(ImageFit.Cover).borderRadius(6)
+            }
+            Column() {
+              Text(a.title).fontSize(15).fontColor(this.coreText()).maxLines(1)
+              Text(a.artist + (a.year > 0 ? ' · ' + a.year : '')).fontSize(11).fontColor(this.coreSub()).maxLines(1)
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+            Button('详情').type(ButtonType.Normal).onClick(() => { this.coreOpenAlbum(a); })
+          }
+          .width('100%').padding(10)
+        }
+      }, (a: Album) => a.source + '/' + a.id)
+    }
+    .width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreArtistList(rows: Artist[]) {
+    List() {
+      ForEach(rows, (a: Artist) => {
+        ListItem() {
+          Row({ space: 10 }) {
+            if (a.cover.length > 0) {
+              Image(this.client.abs(a.cover)).width(44).height(44).objectFit(ImageFit.Cover).borderRadius(22)
+            }
+            Column() {
+              Text(a.name).fontSize(15).fontColor(this.coreText()).maxLines(1)
+              Text(a.albumCount + ' 张专辑').fontSize(11).fontColor(this.coreSub())
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+            Button('详情').type(ButtonType.Normal).onClick(() => { this.coreOpenArtist(a); })
+          }.width('100%').padding(10)
+        }
+      }, (a: Artist) => a.source + '/' + a.id)
+    }
+    .width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  corePlaylistList(rows: Playlist[]) {
+    List() {
+      ListItem() {
+        Row({ space: 8 }) {
+          Button('新建歌单').type(ButtonType.Normal).onClick(() => { this.plDlgMode = 1; this.plDlgName = ''; })
+          Button('导入分享码').type(ButtonType.Normal).onClick(() => { this.importOpen = true; this.importCode = ''; })
+        }.width('100%').padding(10)
+      }
+      ForEach(rows, (p: Playlist) => {
+        ListItem() {
+          Row({ space: 8 }) {
+            Column() {
+              Text(p.name).fontSize(15).fontColor(this.coreText()).maxLines(1)
+              Text(p.songCount + ' 首' + (p.available === false ? ' · 离线缓存' : '')).fontSize(11).fontColor(this.coreSub())
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+            Button('播放').type(ButtonType.Normal).onClick(() => { this.playPlaylistNow(p); })
+            Button('详情').type(ButtonType.Normal).onClick(() => { this.coreOpenPlaylist(p); })
+            Button('管理').type(ButtonType.Normal).onClick(() => { this.openManage(p); })
+          }.width('100%').padding(10)
+        }
+      }, (p: Playlist) => p.source + '/' + p.id)
+    }
+    .width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreRadioList() {
+    List() {
+      ForEach(this.radios, (r: InternetRadio) => {
+        ListItem() {
+          Row() {
+            Column() {
+              Text(r.name).fontSize(15).fontColor(this.coreText())
+              Text(r.homepageUrl).fontSize(10).fontColor(this.coreSub()).maxLines(1)
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+            Button('播放').type(ButtonType.Normal).onClick(() => { this.playRadio(r); })
+          }.width('100%').padding(10)
+        }
+      }, (r: InternetRadio) => r.source + '/' + r.id)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreMiniPlayer() {
+    Column() {
+      Slider({ value: this.pos, min: 0, max: this.dur > 0 ? this.dur : 1, step: 1 })
+        .width('100%').onChange((v: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) this.seekTo(v);
+        })
+      Row({ space: 8 }) {
+        Column() {
+          Text(this.nowTitle).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.coreText()).maxLines(1)
+          Text(this.nowArtist).fontSize(11).fontColor(this.coreSub()).maxLines(1)
+        }.alignItems(HorizontalAlign.Start).layoutWeight(1).onClick(() => { this.corePlayerVisible = true; })
+        Button('上一首').type(ButtonType.Normal).onClick(() => { this.prev(); })
+        Button(this.playing ? '暂停' : '播放').type(ButtonType.Normal).onClick(() => { this.toggle(); })
+        Button('下一首').type(ButtonType.Normal).onClick(() => { this.next(true); })
+        Button('队列').type(ButtonType.Normal).onClick(() => { this.coreQueueVisible = true; })
+      }.width('100%').padding({ left: 10, right: 10, bottom: 8 })
+    }.width('100%').backgroundColor(this.coreCard())
+  }
+
+  @Builder
+  coreHomePage() {
+    Scroll() {
+      Column({ space: 10 }) {
+        Row() {
+          Text('首页').fontSize(24).fontWeight(FontWeight.Bold).fontColor(this.coreText()).layoutWeight(1)
+          Button('刷新').type(ButtonType.Normal).onClick(() => { this.refreshHomeFromServer(); })
+        }.width('100%')
+        Text('推荐歌曲').fontSize(17).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%')
+        ForEach(this.homeFeedSongs().slice(0, 12), (t: Track, i: number) => { this.coreTrackRow(t, this.homeFeedSongs(), i) },
+          (t: Track, i: number) => 'home/' + t.source + '/' + t.id + '/' + i)
+        Text('最近专辑').fontSize(17).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 8 })
+        ForEach(this.recent.slice(0, 10), (a: Album) => {
+          Row() {
+            Text(a.title + ' · ' + a.artist).fontSize(14).fontColor(this.coreText()).layoutWeight(1).maxLines(1)
+            Button('详情').type(ButtonType.Normal).onClick(() => { this.coreOpenAlbum(a); })
+          }.width('100%').padding({ top: 6, bottom: 6 })
+        }, (a: Album) => 'recent/' + a.source + '/' + a.id)
+        Text('最新专辑').fontSize(17).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 8 })
+        ForEach(this.newest.slice(0, 10), (a: Album) => {
+          Row() {
+            Text(a.title + ' · ' + a.artist).fontSize(14).fontColor(this.coreText()).layoutWeight(1).maxLines(1)
+            Button('详情').type(ButtonType.Normal).onClick(() => { this.coreOpenAlbum(a); })
+          }.width('100%').padding({ top: 6, bottom: 6 })
+        }, (a: Album) => 'new/' + a.source + '/' + a.id)
+        Column().height(20)
+      }.width('100%').padding(12).alignItems(HorizontalAlign.Start)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreLibraryPage() {
+    Column() {
+      Text('资料库').fontSize(24).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').padding({ left: 12, top: 8, bottom: 8 })
+      Scroll() {
+        Row({ space: 6 }) {
+          this.coreNavButton('歌曲', this.lib === 0, () => { this.loadLib(0); })
+          this.coreNavButton('专辑', this.lib === 1, () => { this.loadLib(1); })
+          this.coreNavButton('歌手', this.lib === 2, () => { this.loadLib(2); })
+          this.coreNavButton('歌单', this.lib === 3, () => { this.loadLib(3); })
+          this.coreNavButton('收藏', this.lib === 4, () => { this.loadLib(4); })
+          this.coreNavButton('最近', this.lib === 5, () => { this.loadLib(5); })
+          if (this.radioEnabled) this.coreNavButton('电台', this.lib === 6, () => { this.loadLib(6); })
+        }.padding({ left: 10, right: 10, bottom: 8 })
+      }.scrollable(ScrollDirection.Horizontal).width('100%')
+      if (this.lib === 0) this.coreTrackList(this.songs)
+      else if (this.lib === 1) this.coreAlbumList(this.albums)
+      else if (this.lib === 2) this.coreArtistList(this.artists)
+      else if (this.lib === 3) this.corePlaylistList(this.playlists)
+      else if (this.lib === 4) this.coreTrackList(this.liked)
+      else if (this.lib === 5) this.coreAlbumList(this.recent)
+      else this.coreRadioList()
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreSearchPage() {
+    Column() {
+      Text('搜索').fontSize(24).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').padding({ left: 12, top: 8, bottom: 8 })
+      Row({ space: 8 }) {
+        TextInput({ text: this.q, placeholder: '歌名 / 歌手 / 专辑', controller: this.searchInputController })
+          .layoutWeight(1).onChange((v: string) => { this.scheduleSearchSuggestion(v); }).onSubmit(() => { this.doSearch(); })
+        Button('搜索').type(ButtonType.Normal).onClick(() => { this.doSearch(); })
+      }.width('100%').padding({ left: 10, right: 10 })
+      if (!this.searchCommitted && this.q.trim().length > 0 && this.searchSuggestions.length > 0) {
+        List() {
+          ForEach(this.searchSuggestions.slice(0, 12), (s: string) => {
+            ListItem() {
+              Button(s).type(ButtonType.Normal).width('100%').fontColor(this.coreText()).backgroundColor(this.coreCard())
+                .onClick(() => { this.commitSearch(s); })
+            }
+          }, (s: string) => 'sug/' + s)
+        }.height(Math.min(300, this.searchSuggestions.length * 44)).width('100%').padding({ left: 10, right: 10 })
+      } else if (!this.searchCommitted && this.q.trim().length === 0 && this.searchHistory.length > 0) {
+        Row() {
+          Text('历史记录').fontSize(13).fontColor(this.coreSub()).layoutWeight(1)
+          Button('清空').type(ButtonType.Normal).onClick(() => { this.clearSearchHistory(); })
+        }.width('100%').padding({ left: 10, right: 10, top: 6 })
+        Scroll() {
+          Row({ space: 6 }) {
+            ForEach(this.searchHistory.slice(0, 12), (s: string) => {
+              Button(s).type(ButtonType.Normal).onClick(() => { this.commitSearch(s); })
+            }, (s: string) => 'hist/' + s)
+          }.padding({ left: 10, right: 10, bottom: 8 })
+        }.scrollable(ScrollDirection.Horizontal).width('100%')
+      }
+      if (this.searchCommitted) {
+        Row({ space: 6 }) {
+          this.coreNavButton('歌曲 ' + this.hitSongs.length, this.coreSearchKind === 0, () => { this.coreSearchKind = 0; })
+          this.coreNavButton('专辑 ' + this.hitAlbums.length, this.coreSearchKind === 1, () => { this.coreSearchKind = 1; })
+          this.coreNavButton('歌手 ' + this.hitArtists.length, this.coreSearchKind === 2, () => { this.coreSearchKind = 2; })
+        }.width('100%').padding(10)
+        if (this.coreSearchKind === 0) this.coreTrackList(this.hitSongs)
+        else if (this.coreSearchKind === 1) this.coreAlbumList(this.hitAlbums)
+        else this.coreArtistList(this.hitArtists)
+      } else {
+        Column().layoutWeight(1)
+      }
+    }.width('100%').layoutWeight(1)
+  }
+
+  async coreOpenLikedPage(): Promise<void> {
+    await this.loadLib(4);
+    this.page = 'liked';
+  }
+
+  async coreOpenRecentPage(): Promise<void> {
+    await this.loadLib(5);
+    this.page = 'recent';
+  }
+
+  @Builder
+  coreMePage() {
+    Scroll() {
+      Column({ space: 8 }) {
+        Text('我的').fontSize(24).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%')
+        Text(this.accountName() + ' · ' + this.sourceModeLabel()).fontSize(12).fontColor(this.coreSub()).width('100%')
+        Button('收藏 ' + this.liked.length).width('100%').onClick(() => { this.coreOpenLikedPage(); })
+        Button('最近播放').width('100%').onClick(() => { this.coreOpenRecentPage(); })
+        Button('关注的歌手 ' + this.followedArtistRows().length).width('100%').onClick(() => { this.page = 'followed'; })
+        Button('本地音乐 ' + this.localSongs.length).width('100%').onClick(() => { this.page = 'local'; this.scanLocalLibrary(); })
+        Button('下载管理 ' + this.downloadedLocalRows().length).width('100%').onClick(() => { this.page = 'downloads'; this.scanLocalLibrary(); })
+        Button('听歌统计').width('100%').onClick(() => { this.page = 'stats'; })
+        Button('设置 / 音源').width('100%').onClick(() => { this.page = 'settings'; this.loadSources(); })
+        Button('高级设置').width('100%').onClick(() => { this.page = 'advanced'; this.refreshCacheInfo(); })
+      }.width('100%').padding(12).alignItems(HorizontalAlign.Start)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreDetailPage() {
+    Column() {
+      this.coreHeader('详情', () => { this.coreCloseDetail(); })
+      Column({ space: 8 }) {
+        if (this.detailCover.length > 0) {
+          Image(this.detailCover).width(160).height(160).objectFit(ImageFit.Cover).borderRadius(8)
+        }
+        Text(this.detailTitle).fontSize(22).fontWeight(FontWeight.Bold).fontColor(this.coreText()).maxLines(2)
+        Text(this.detailSub).fontSize(13).fontColor(this.coreSub()).maxLines(2)
+        Row({ space: 8 }) {
+          if (this.detailTracks.length > 0) Button('播放全部').onClick(() => { this.playList(this.detailTracks, 0); })
+          if (this.detailKind === 'artist') {
+            Button(this.isArtistFollowed(this.detailSource, this.detailId, this.detailTitle) ? '取消关注' : '关注')
+              .onClick(() => { this.toggleDetailArtistFollow(); })
+          }
+        }
+      }.width('100%').padding({ left: 12, right: 12, bottom: 10 }).alignItems(HorizontalAlign.Start)
+      if (this.detailKind === 'artist' && this.artistAlbums.length > 0) {
+        Text('专辑').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').padding({ left: 12, bottom: 6 })
+        Scroll() {
+          Row({ space: 6 }) {
+            ForEach(this.artistAlbums, (a: Album) => { Button(a.title).type(ButtonType.Normal).onClick(() => { this.coreOpenAlbum(a); }) },
+              (a: Album) => 'artistalbum/' + a.source + '/' + a.id)
+          }.padding({ left: 10, right: 10, bottom: 6 })
+        }.scrollable(ScrollDirection.Horizontal).width('100%')
+      }
+      this.coreTrackList(this.detailTracks)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreQueuePage() {
+    Column() {
+      this.coreHeader('播放队列', () => { this.coreQueueVisible = false; })
+      List() {
+        ForEach(this.queue, (t: Track, i: number) => {
+          ListItem() {
+            Row({ space: 8 }) {
+              Text((i === this.qpos ? '▶ ' : '') + t.title + ' · ' + t.artist).fontSize(14).fontColor(this.coreText()).layoutWeight(1).maxLines(1)
+              Button('播放').type(ButtonType.Normal).onClick(() => { this.coreQueuePlay(i); })
+              Button('移除').type(ButtonType.Normal).onClick(() => { this.coreQueueRemove(i); })
+            }.width('100%').padding(10)
+          }
+        }, (t: Track, i: number) => 'queue/' + i + '/' + t.source + '/' + t.id)
+      }.width('100%').layoutWeight(1)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  corePlayerPage() {
+    Scroll() {
+      Column({ space: 10 }) {
+        Row() {
+          Button('返回').onClick(() => { this.corePlayerVisible = false; })
+          Text('正在播放').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.coreText()).layoutWeight(1)
+          Button('队列').onClick(() => { this.coreQueueVisible = true; })
+        }.width('100%')
+        if (this.nowCover.length > 0) Image(this.nowCover).width(220).height(220).objectFit(ImageFit.Cover).borderRadius(8)
+        Text(this.nowTitle).fontSize(22).fontWeight(FontWeight.Bold).fontColor(this.coreText()).maxLines(2)
+        Text(this.nowArtist).fontSize(14).fontColor(this.coreSub()).maxLines(1)
+        Slider({ value: this.pos, min: 0, max: this.dur > 0 ? this.dur : 1, step: 1 })
+          .width('100%').onChange((v: number, mode: SliderChangeMode) => { if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) this.seekTo(v); })
+        Text(fmtDur(this.pos) + ' / ' + fmtDur(this.dur)).fontSize(12).fontColor(this.coreSub())
+        Row({ space: 8 }) {
+          Button('上一首').onClick(() => { this.prev(); })
+          Button(this.playing ? '暂停' : '播放').onClick(() => { this.toggle(); })
+          Button('下一首').onClick(() => { this.next(true); })
+        }
+        Row({ space: 6 }) {
+          Button(this.repeatLabel()).onClick(() => { this.cycleRepeat(); })
+          Button(this.nowLiked ? '取消收藏' : '收藏').onClick(() => { this.like(); })
+          Button('下载').onClick(() => { this.downloadNow(); })
+          Button(this.curQualityText()).onClick(() => { this.pickQuality((this.qIndex + 1) % Q_NAME.length); })
+        }
+        Row({ space: 6 }) {
+          Button('歌手').onClick(() => { this.coreOpenCurrentArtist(); })
+          Button('专辑').onClick(() => { this.coreOpenCurrentAlbum(); })
+          Button('相似歌曲').onClick(() => { this.similarNow(); })
+          Button('加入歌单').onClick(() => { const t = this.current(); if (t !== undefined) this.coreAddTrackToPlaylist(t); })
+        }
+        Row({ space: 6 }) {
+          Button('分享').onClick(() => { this.shareNow(); })
+          Button('复制信息').onClick(() => { this.copyNow(); })
+          Button('15 分钟').onClick(() => { this.setSleepMinutes(15); })
+          Button('30 分钟').onClick(() => { this.setSleepMinutes(30); })
+          Button('关闭定时').onClick(() => { this.setSleepMinutes(0); })
+        }
+        Text('睡眠定时：' + this.sleepLabel()).fontSize(12).fontColor(this.coreSub()).width('100%')
+        Text('歌词').fontSize(17).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 8 })
+        if (this.lyLines.length === 0) {
+          Text(this.lyricsStatus.length > 0 ? this.lyricsStatus : '暂无歌词').fontSize(13).fontColor(this.coreSub()).width('100%')
+        } else {
+          ForEach(this.lyLines, (l: LyricLine, i: number) => {
+            Text(l.line).fontSize(i === this.lyIndex ? 18 : 14).fontWeight(i === this.lyIndex ? FontWeight.Bold : FontWeight.Regular)
+              .fontColor(i === this.lyIndex ? this.coreText() : this.coreSub()).width('100%').padding({ top: 5, bottom: 5 })
+              .onClick(() => { this.seekTo(l.t); })
+          }, (l: LyricLine, i: number) => 'ly/' + i + '/' + l.t)
+        }
+        Column().height(24)
+      }.width('100%').padding(12).alignItems(HorizontalAlign.Start)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreSettingsPage() {
+    Scroll() {
+      Column({ space: 10 }) {
+        this.coreHeader('设置 / 音源', () => { this.page = 'main'; })
+        Text('音乐源模式').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%')
+        Row({ space: 6 }) {
+          this.coreNavButton('仅 NAS', this.musicSourceMode === 0, () => { this.setMusicSourceMode(0); })
+          this.coreNavButton('仅 WebDAV', this.musicSourceMode === 1, () => { this.setMusicSourceMode(1); })
+          this.coreNavButton('合并', this.musicSourceMode === 2, () => { this.setMusicSourceMode(2); })
+        }.width('100%')
+        Text('已配置音源').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 8 })
+        ForEach(this.sources, (s: SourceRow) => {
+          Row({ space: 8 }) {
+            Column() {
+              Text(s.name).fontSize(14).fontColor(this.coreText()).maxLines(1)
+              Text(this.sourceTypeLabel(s.type) + ' · ' + (s.online ? '在线' : '离线') + ' · ' + (s.url !== undefined ? s.url : ''))
+                .fontSize(10).fontColor(this.coreSub()).maxLines(1)
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+            Button('编辑').onClick(() => { this.editSource(s.id); })
+            Button('删除').onClick(() => { this.removeSource(s.id); })
+          }.width('100%').padding(8).backgroundColor(this.coreCard())
+        }, (s: SourceRow) => 'source/' + s.id)
+        Row() {
+          Text(this.srcEditId.length > 0 ? '编辑音源' : '添加音源').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).layoutWeight(1)
+          Button('清空').onClick(() => { this.coreNewSource(); })
+        }.width('100%').margin({ top: 8 })
+        Row({ space: 6 }) {
+          this.coreNavButton('Navidrome', this.srcKind === 'subsonic', () => { this.coreSelectSourceKind('subsonic'); })
+          this.coreNavButton('WebDAV', this.srcKind === 'webdav', () => { this.coreSelectSourceKind('webdav'); })
+        }.width('100%')
+        TextInput({ text: this.srcName, placeholder: '名称' }).onChange((v: string) => { this.srcName = v; })
+        TextInput({ text: this.srcUrl, placeholder: this.srcKind === 'webdav' ? 'WebDAV 地址，例如 http://nas:5244/dav/' : 'Navidrome 地址' })
+          .onChange((v: string) => { this.srcUrl = v; })
+        TextInput({ text: this.srcUser, placeholder: '用户名' }).onChange((v: string) => { this.srcUser = v; })
+        TextInput({ text: this.srcPass, placeholder: '密码' }).type(InputType.Password).onChange((v: string) => { this.srcPass = v; })
+        if (this.srcMsg.length > 0) Text(this.srcMsg).fontSize(12).fontColor(this.srcOk ? '#2A9D42' : '#D33').width('100%')
+        Row({ space: 8 }) {
+          Button(this.srcBusy ? '处理中…' : '测试连接').enabled(!this.srcBusy).onClick(() => { this.probeSource(); })
+          Button(this.srcBusy ? '处理中…' : (this.srcEditId.length > 0 ? '保存修改' : '保存')).enabled(!this.srcBusy).onClick(() => { this.addSource(); })
+        }
+        Text('歌单 / 收藏离线缓存：' + this.playlistCacheSummary()).fontSize(12).fontColor(this.coreSub()).width('100%').margin({ top: 8 })
+        Button('清理歌单缓存').onClick(() => { this.clearPlaylistCache(); })
+        Column().height(20)
+      }.width('100%').padding({ left: 12, right: 12 }).alignItems(HorizontalAlign.Start)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreAdvancedPage() {
+    Scroll() {
+      Column({ space: 8 }) {
+        this.coreHeader('高级设置', () => { this.page = 'main'; })
+        Text('播放').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%')
+        Toggle({ type: ToggleType.Switch, isOn: this.continueLast }).onChange((v: boolean) => { this.setAdvancedBool('continueLast', v); })
+        Text('继续上次播放：' + (this.continueLast ? '开' : '关')).fontColor(this.coreText())
+        Toggle({ type: ToggleType.Switch, isOn: this.coexistAudio }).onChange((v: boolean) => { this.setAdvancedBool('coexistAudio', v); })
+        Text('与其他应用同时播放：' + (this.coexistAudio ? '开' : '关')).fontColor(this.coreText())
+        Toggle({ type: ToggleType.Switch, isOn: this.replayGain }).onChange((v: boolean) => { this.setAdvancedBool('replayGain', v); })
+        Text('ReplayGain：' + (this.replayGain ? '开' : '关')).fontColor(this.coreText())
+        Toggle({ type: ToggleType.Switch, isOn: this.fadeAudio }).onChange((v: boolean) => { this.setAdvancedBool('fadeAudio', v); })
+        Text('淡入淡出：' + (this.fadeAudio ? '开' : '关')).fontColor(this.coreText())
+        Toggle({ type: ToggleType.Switch, isOn: this.forceKaraoke }).onChange((v: boolean) => { this.setAdvancedBool('forceKaraoke', v); })
+        Text('强制逐字歌词：' + (this.forceKaraoke ? '开' : '关')).fontColor(this.coreText())
+        Text('界面 / 歌词').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 10 })
+        Row({ space: 6 }) {
+          Button('歌词字号：' + this.lyricSizeLabel()).onClick(() => { this.cycleLyricSize(); })
+          Button('界面字号：' + this.interfaceSizeLabel()).onClick(() => { this.cycleInterfaceSize(); })
+          Button('主题：' + this.themeLabel()).onClick(() => { this.cycleTheme(); })
+        }
+        Toggle({ type: ToggleType.Switch, isOn: this.carLyrics }).onChange((v: boolean) => { this.setAdvancedBool('carLyrics', v); })
+        Text('车载 / 蓝牙歌词：' + (this.carLyrics ? '开' : '关')).fontColor(this.coreText())
+        Toggle({ type: ToggleType.Switch, isOn: this.radioEnabled }).onChange((v: boolean) => { this.setAdvancedBool('radioEnabled', v); })
+        Text('网络电台：' + (this.radioEnabled ? '开' : '关')).fontColor(this.coreText())
+        Text('加载限制').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 10 })
+        Row({ space: 6 }) {
+          Button('歌曲 ' + this.songLoadLimit).onClick(() => { this.cycleSongLoadLimit(); })
+          Button('专辑 ' + this.albumLoadLimit).onClick(() => { this.cycleAlbumLoadLimit(); })
+          Button('歌手 ' + this.artistLoadLimit).onClick(() => { this.cycleArtistLoadLimit(); })
+        }
+        Text('缓存').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 10 })
+        Button('音频缓存上限：' + this.audioCacheGB + ' GB').onClick(() => { this.cycleAudioCacheGB(); })
+        Text('音频缓存：' + this.formatBytes(this.audioCacheBytes)).fontSize(12).fontColor(this.coreSub()).width('100%')
+        Text('图片缓存：' + this.imageCacheLabel).fontSize(12).fontColor(this.coreSub()).width('100%')
+        Text('元数据缓存：' + this.metadataCacheLabel).fontSize(12).fontColor(this.coreSub()).width('100%')
+        Row({ space: 6 }) {
+          Button('清音频缓存').onClick(() => { this.clearAudioCache(); })
+          Button('清图片缓存').onClick(() => { this.clearImageCache(); })
+          Button('清元数据缓存').onClick(() => { this.clearMetadataCache(); })
+        }
+        Column().height(20)
+      }.width('100%').padding({ left: 12, right: 12 }).alignItems(HorizontalAlign.Start)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreLocalPage() {
+    Column() {
+      this.coreHeader('本地音乐', () => { this.page = 'main'; })
+      Row({ space: 8 }) {
+        Button(this.localImportBusy ? '导入中…' : '导入本地音乐').enabled(!this.localImportBusy).onClick(() => { this.importLocalMusic(); })
+        Button('重新扫描').onClick(() => { this.scanLocalLibrary(); })
+      }.width('100%').padding({ left: 10, right: 10, bottom: 8 })
+      Text('已识别 ' + this.localSongs.length + ' 首；下载目录 Meow/download').fontSize(11).fontColor(this.coreSub()).width('100%').padding({ left: 12, bottom: 6 })
+      this.coreTrackList(this.localSongs)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreDownloadsPage() {
+    Column() {
+      this.coreHeader('下载管理', () => { this.page = 'main'; })
+      Text('已下载 ' + this.downloadedLocalRows().length + ' 首 · ' + this.formatBytes(this.downloadedTotalBytes()) + ' · 下载中 ' + this.activeDownloadCount())
+        .fontSize(12).fontColor(this.coreSub()).width('100%').padding({ left: 12, right: 12, bottom: 8 })
+      List() {
+        ForEach(this.downloadedLocalRows(), (t: Track, i: number) => {
+          ListItem() {
+            Row({ space: 8 }) {
+              Text(t.title + ' · ' + t.artist).fontSize(14).fontColor(this.coreText()).layoutWeight(1).maxLines(1)
+              Button('播放').onClick(() => { this.playList(this.downloadedLocalRows(), i); })
+              Button('删除').onClick(() => { this.deleteDownloadedTrack(t); })
+            }.width('100%').padding(10)
+          }
+        }, (t: Track, i: number) => 'dl/' + t.id + '/' + i)
+      }.width('100%').layoutWeight(1)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreStatsPage() {
+    Scroll() {
+      Column({ space: 8 }) {
+        this.coreHeader('听歌统计', () => { this.page = 'main'; })
+        Text('累计 ' + this.statTimeLabel(this.statTotalSeconds) + ' · 有效播放 ' + this.statTotalPlays + ' · 歌曲 ' + this.statRows.length)
+          .fontSize(14).fontColor(this.coreText()).width('100%')
+        Text('歌曲排行').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%')
+        ForEach(this.topSongStats(), (r: PlayStatRow, i: number) => {
+          Text((i + 1) + '. ' + r.title + ' · ' + r.artist + ' · ' + r.plays + ' 次 · ' + this.statTimeLabel(r.seconds))
+            .fontSize(13).fontColor(this.coreText()).width('100%').padding({ top: 5, bottom: 5 })
+        }, (r: PlayStatRow, i: number) => 'stat/' + i + '/' + r.artist + '/' + r.title)
+        Text('歌手排行').fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').margin({ top: 8 })
+        ForEach(this.topArtistStats(), (r: ArtistStatRow, i: number) => {
+          Text((i + 1) + '. ' + r.artist + ' · ' + r.plays + ' 次 · ' + this.statTimeLabel(r.seconds))
+            .fontSize(13).fontColor(this.coreText()).width('100%').padding({ top: 5, bottom: 5 })
+        }, (r: ArtistStatRow, i: number) => 'astat/' + i + '/' + r.artist)
+        Column().height(20)
+      }.width('100%').padding({ left: 12, right: 12 }).alignItems(HorizontalAlign.Start)
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreFollowedPage() {
+    Column() {
+      this.coreHeader('关注的歌手', () => { this.page = 'main'; })
+      this.coreArtistList(this.followedArtistRows())
+    }.width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreLikedPage() {
+    Column() { this.coreHeader('收藏', () => { this.page = 'main'; }); this.coreTrackList(this.liked) }
+      .width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreRecentPage() {
+    Column() { this.coreHeader('最近播放', () => { this.page = 'main'; }); this.coreAlbumList(this.recent) }
+      .width('100%').layoutWeight(1)
+  }
+
+  @Builder
+  coreMainShell() {
+    Column() {
+      Row() {
+        Text('Meow Core').fontSize(22).fontWeight(FontWeight.Bold).fontColor(this.coreText()).layoutWeight(1)
+        Text(this.buildLabel).fontSize(10).fontColor(this.coreSub()).maxLines(1)
+      }.width('100%').padding({ left: 12, right: 12, top: 10, bottom: 4 })
+      this.coreStatus()
+      Scroll() {
+        Row({ space: 6 }) {
+          this.coreNavButton('首页', this.tab === 0, () => { this.coreSelectTab(0); })
+          this.coreNavButton('资料库', this.tab === 1, () => { this.coreSelectTab(1); })
+          this.coreNavButton('搜索', this.tab === 2, () => { this.coreSelectTab(2); })
+          this.coreNavButton('我的', this.tab === 3, () => { this.coreSelectTab(3); })
+        }.padding({ left: 10, right: 10, bottom: 8 })
+      }.scrollable(ScrollDirection.Horizontal).width('100%')
+      if (this.tab === 0) this.coreHomePage()
+      else if (this.tab === 1) this.coreLibraryPage()
+      else if (this.tab === 2) this.coreSearchPage()
+      else this.coreMePage()
+      this.coreMiniPlayer()
+    }.width('100%').height('100%')
+  }
+
+  @Builder
+  corePlaylistDialogs() {
+    if (this.plDlgMode > 0) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column().width('100%').height('100%').backgroundColor('#66000000').onClick(() => { this.plDlgMode = 0; })
+        Column({ space: 10 }) {
+          Text(this.plDlgMode === 1 ? '新建歌单' : '重命名歌单').fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.coreText())
+          TextInput({ text: this.plDlgName, placeholder: '歌单名称' }).onChange((v: string) => { this.plDlgName = v; })
+          Row({ space: 8 }) {
+            Button('取消').onClick(() => { this.plDlgMode = 0; })
+            Button('确定').onClick(() => { this.confirmPlDlg(); })
+          }
+        }.width('86%').padding(18).backgroundColor(this.coreCard()).borderRadius(10)
+      }.width('100%').height('100%').zIndex(60)
+    }
+    if (this.manageOpen) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column().width('100%').height('100%').backgroundColor('#66000000').onClick(() => { this.manageOpen = false; })
+        Column({ space: 10 }) {
+          Text('管理：' + this.manageName).fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.coreText())
+          TextInput({ text: this.plDlgName, placeholder: '歌单名称' }).onChange((v: string) => { this.plDlgName = v; })
+          Row({ space: 6 }) {
+            Button('重命名').onClick(() => { this.plDlgMode = 2; this.confirmPlDlg(); })
+            Button('复制分享码').onClick(() => { this.shareManage(); })
+            Button('删除').onClick(() => { this.deleteManage(); })
+          }
+          Button('关闭').onClick(() => { this.manageOpen = false; })
+        }.width('90%').padding(18).backgroundColor(this.coreCard()).borderRadius(10)
+      }.width('100%').height('100%').zIndex(61)
+    }
+    if (this.importOpen) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column().width('100%').height('100%').backgroundColor('#66000000').onClick(() => { this.importOpen = false; })
+        Column({ space: 10 }) {
+          Text('导入歌单分享码').fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.coreText())
+          TextInput({ text: this.importCode, placeholder: 'LM1./LM2. 分享码' }).onChange((v: string) => { this.importCode = v; })
+          Row({ space: 8 }) {
+            Button('取消').onClick(() => { this.importOpen = false; })
+            Button('导入').onClick(() => { this.importShare(); })
+          }
+        }.width('90%').padding(18).backgroundColor(this.coreCard()).borderRadius(10)
+      }.width('100%').height('100%').zIndex(62)
+    }
+    if (this.plPickOn) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column().width('100%').height('100%').backgroundColor('#66000000').onClick(() => { this.plPickOn = false; })
+        Column() {
+          Text('加入歌单：' + this.plPickTitle).fontSize(17).fontWeight(FontWeight.Bold).fontColor(this.coreText()).width('100%').padding(10)
+          Button('新建歌单并加入').width('100%').onClick(() => { this.plDlgMode = 1; this.plDlgName = ''; })
+          List() {
+            ForEach(this.pickPlaylists(), (p: Playlist) => {
+              ListItem() { Button(p.name).width('100%').onClick(() => { this.addPick(p); }) }
+            }, (p: Playlist) => 'pick/' + p.source + '/' + p.id)
+          }.height(360).width('100%')
+          Button('取消').width('100%').onClick(() => { this.plPickOn = false; })
+        }.width('90%').padding(12).backgroundColor(this.coreCard()).borderRadius(10)
+      }.width('100%').height('100%').zIndex(63)
+    }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        if (this.coreQueueVisible) this.coreQueuePage()
+        else if (this.corePlayerVisible) this.corePlayerPage()
+        else if (this.coreDetailVisible) this.coreDetailPage()
+        else if (this.page === 'settings') this.coreSettingsPage()
+        else if (this.page === 'advanced') this.coreAdvancedPage()
+        else if (this.page === 'local') this.coreLocalPage()
+        else if (this.page === 'downloads') this.coreDownloadsPage()
+        else if (this.page === 'stats') this.coreStatsPage()
+        else if (this.page === 'followed') this.coreFollowedPage()
+        else if (this.page === 'liked') this.coreLikedPage()
+        else if (this.page === 'recent') this.coreRecentPage()
+        else this.coreMainShell()
+      }
+      .width('100%').height('100%').backgroundColor(this.coreBg())
+      this.corePlaylistDialogs()
+    }.width('100%').height('100%')
+  }
